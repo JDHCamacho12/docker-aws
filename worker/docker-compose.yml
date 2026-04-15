@@ -1,0 +1,94 @@
+version: "3.9"
+
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME}
+  restart: unless-stopped
+  env_file:
+    - ../.env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
+
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: >-
+      postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+
+    AIRFLOW__CELERY__BROKER_URL: >-
+      amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@${MASTER_PRIVATE_IP}:5672/${RABBITMQ_DEFAULT_VHOST}
+    AIRFLOW__CELERY__RESULT_BACKEND: >-
+      db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+    AIRFLOW__CELERY__TASK_ACKS_LATE: "true"
+
+    # Logging
+    AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+    AIRFLOW__LOGGING__LOG_LEVEL: INFO
+
+  volumes:
+    - ../airflow/dags:/opt/airflow/dags
+    - ../airflow/logs:/opt/airflow/logs
+    - ../airflow/plugins:/opt/airflow/plugins
+  networks:
+    - airflow_net
+
+# ==============================================================================
+services:
+
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  airflow-worker:
+    <<: *airflow-common
+    command: celery worker
+    environment:
+      AIRFLOW__CELERY__WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "celery -A airflow.executors.celery_executor inspect ping -d celery@$${HOSTNAME}"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # FIX: límites de recursos usando variables del .env
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT}"
+          memory: ${WORKER_MEM_LIMIT}
+
+  # ── Git Sync — sincronización de DAGs ─────────────────────────────────────────
+  # FIX: agregado al worker para mantener DAGs sincronizados con el master
+  git-sync:
+    profiles:
+      - git-sync
+    image: registry.k8s.io/git-sync/git-sync:v4.2.1
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      GITSYNC_REPO: ${GIT_SYNC_REPO}
+      GITSYNC_BRANCH: ${GIT_SYNC_BRANCH}
+      GITSYNC_ROOT: /git
+      GITSYNC_LINK: dags
+      GITSYNC_PERIOD: 60s
+      GITSYNC_SSH_KEY_FILE: /etc/git-secret/id_rsa
+      # FIX: en producción usar known_hosts real generado con:
+      # ssh-keyscan github.com > known_hosts
+      GITSYNC_SSH_KNOWN_HOSTS: "true"
+      GITSYNC_SSH_KNOWN_HOSTS_FILE: /etc/git-secret/known_hosts
+    volumes:
+      - ../airflow/dags:/git
+      - ${GIT_SSH_KEY_PATH}:/etc/git-secret/id_rsa:ro
+      # Montar el archivo known_hosts generado previamente:
+      # - ./known_hosts:/etc/git-secret/known_hosts:ro
+    networks:
+      - airflow_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  airflow_net:
+    driver: bridge
