@@ -1,5 +1,5 @@
 # Entorno — NUNCA subir al repo
-.env
+
 
 # Logs de Airflow
 airflow/logs/
