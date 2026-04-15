@@ -1,0 +1,35 @@
+# Entorno — NUNCA subir al repo
+.env
+
+# Logs de Airflow
+airflow/logs/
+
+# DAGs sincronizados por git-sync (se generan en runtime)
+airflow/dags/
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+
+# Claves SSH
+*.pem
+*.rsa
+id_rsa*
+*.key
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
